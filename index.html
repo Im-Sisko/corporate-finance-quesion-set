@@ -412,7 +412,7 @@ button:focus-visible { outline: 3px solid rgba(109, 93, 252, .28); outline-offse
 
         <div class="method-note">
           <div class="method-icon">◎</div>
-          <div><strong>如何使用本题库？</strong><p>练习模式覆盖每章全部 90 题，含概念辨析、计算应用与情境分析三类，答错立即看解析；测验模式从题库随机抽取 30 题，交卷前可修改答案，交卷后出分并逐题回顾。题目来源：BMA 12e 课件与教材课后题（未收录 Challenge 难度题）。所有题均为单项选择题。</p></div>
+          <div><strong>如何使用本题库？</strong><p>练习模式覆盖每章全部 90 题，含概念辨析、计算应用与情境分析三类，答错立即看解析；测验模式从题库随机抽取 30 题，交卷前可修改答案，交卷后出分并逐题回顾；另有三章综合测验（Ch10、Ch14、Ch15 各随机 10 题，共 30 题）。所有题目条件自足，无需翻阅教材即可作答。题目来源：BMA 12e 课件与教材课后题（未收录 Challenge 难度题）。所有题均为单项选择题。</p></div>
         </div>
       </section>
 
@@ -598,11 +598,23 @@ button:focus-visible { outline: 3px solid rgba(109, 93, 252, .28); outline-offse
     chapter.questions = chapter.raw.map((q, index) => ({
       id: `${chapter.id}-q${String(index + 1).padStart(2, "0")}`,
       number: index + 1,
+      chapterTag: chapter.chapter,
       type: q.t, topic: q.tp, page: q.pg,
       q: q.q, options: q.o, answer: q.a, explanation: q.ex, answerZh: q.az
     }));
     delete chapter.raw;
   });
+
+  /* 综合测验：Ch10 / Ch14 / Ch15 各随机 10 题，共 30 题 */
+  const COMBO_ID = "combo101415";
+  const COMBO_SOURCES = ["ch10", "ch14", "ch15"];
+  const comboChapter = {
+    id: COMBO_ID, chapter: "Ch10+14+15", title: "三章综合",
+    englishTitle: "Chapters 10 · 14 · 15 Combined",
+    description: "从 Ch10 项目分析、Ch14 公司融资概览、Ch15 公司如何发行证券各随机抽取 10 题，组成 30 题综合测验。",
+    color: "#3f4b66"
+  };
+  comboChapter.questions = COMBO_SOURCES.flatMap(id => chapters.find(c => c.id === id).questions);
 
   const $ = id => document.getElementById(id);
   const els = {
@@ -628,6 +640,7 @@ button:focus-visible { outline: 3px solid rgba(109, 93, 252, .28); outline-offse
 
   function freshState() {
     const orders = {}, currentIds = {}, filters = {}, tests = {}, history = {};
+    history[COMBO_ID] = { attempts: 0, best: null };
     chapters.forEach(chapter => {
       orders[chapter.id] = chapter.questions.map(q => q.id);
       currentIds[chapter.id] = chapter.questions[0].id;
@@ -655,7 +668,11 @@ button:focus-visible { outline: 3px solid rgba(109, 93, 252, .28); outline-offse
       merged.filters = { ...base.filters, ...(saved.filters || {}) };
       merged.tests = saved.tests && typeof saved.tests === "object" ? saved.tests : {};
       merged.history = { ...base.history, ...(saved.history || {}) };
-      if (!chapters.some(c => c.id === merged.currentChapter)) merged.currentChapter = "ch05";
+      if (merged.currentChapter !== COMBO_ID && !chapters.some(c => c.id === merged.currentChapter)) merged.currentChapter = "ch05";
+      if (merged.lastChapter === COMBO_ID || !chapters.some(c => c.id === merged.lastChapter)) merged.lastChapter = "ch05";
+      const allIds = new Set(chapters.flatMap(c => c.questions.map(q => q.id)));
+      const comboTest = merged.tests[COMBO_ID];
+      if (comboTest && (!Array.isArray(comboTest.ids) || !comboTest.ids.every(id => allIds.has(id)))) delete merged.tests[COMBO_ID];
       chapters.forEach(chapter => {
         const validIds = new Set(chapter.questions.map(q => q.id));
         const savedOrder = Array.isArray(merged.orders[chapter.id]) ? merged.orders[chapter.id] : [];
@@ -672,7 +689,7 @@ button:focus-visible { outline: 3px solid rgba(109, 93, 252, .28); outline-offse
 
   let state = loadState();
   let toastTimer;
-  const currentChapter = () => chapters.find(c => c.id === state.currentChapter);
+  const currentChapter = () => state.currentChapter === COMBO_ID ? comboChapter : chapters.find(c => c.id === state.currentChapter);
   const allQuestions = () => chapters.flatMap(c => c.questions);
   const getQuestion = id => allQuestions().find(q => q.id === id);
   const isBookmarked = id => state.bookmarks.includes(id);
@@ -745,7 +762,13 @@ button:focus-visible { outline: 3px solid rgba(109, 93, 252, .28); outline-offse
         <span class="nav-progress">${stats.answered}/${stats.total}</span>
       </button>`;
     }).join("");
+    els.chapterNav.innerHTML += `<button class="nav-item ${state.view !== "home" && state.currentChapter === COMBO_ID ? "active" : ""}" data-combo="1" type="button">
+      <span class="nav-icon">✚</span>
+      <span class="nav-copy"><strong>综合测验</strong><small>Ch10 · 14 · 15 各 10 题</small></span>
+      <span class="nav-progress">30</span>
+    </button>`;
     els.chapterNav.querySelectorAll("[data-chapter]").forEach(button => button.addEventListener("click", () => openChapter(button.dataset.chapter)));
+    els.chapterNav.querySelectorAll("[data-combo]").forEach(button => button.addEventListener("click", () => startTest(COMBO_ID)));
     els.homeNav.classList.toggle("active", state.view === "home");
   }
 
@@ -780,6 +803,18 @@ button:focus-visible { outline: 3px solid rgba(109, 93, 252, .28); outline-offse
         </div>
       </article>`;
     }).join("");
+    const comboH = state.history[COMBO_ID] || { attempts: 0, best: null };
+    els.chapterCards.innerHTML += `<article class="chapter-card" style="--chapter-color:${comboChapter.color};--chapter-soft:${softColor(comboChapter.color)}">
+      <div class="chapter-number"><span>综合测验</span><small>10 + 10 + 10</small></div>
+      <div><h3>Ch10 · Ch14 · Ch15 综合测验</h3><p class="chapter-english">${comboChapter.englishTitle}</p></div>
+      <p class="chapter-description">${comboChapter.description}</p>
+      <div><div class="distribution">${COMBO_SOURCES.map(id => `<span style="width:33.33%;background:${chapters.find(c => c.id === id).color}" title="${chapters.find(c => c.id === id).chapter}"></span>`).join("")}</div><div class="distribution-legend"><span>Ch10 10</span><span>Ch14 10</span><span>Ch15 10</span></div></div>
+      <div class="chapter-card-footer">
+        <span>${comboH.attempts ? `已测 ${comboH.attempts} 次 · 最好成绩 ${comboH.best} 分` : "还没有测验记录"}</span>
+        <button class="card-test" data-test="${COMBO_ID}" type="button">▶ 开始综合测验</button>
+        <span class="test-best">每章固定抽 10 题，共 30 题</span>
+      </div>
+    </article>`;
     els.chapterCards.querySelectorAll("[data-start]").forEach(button => button.addEventListener("click", () => openChapter(button.dataset.start)));
     els.chapterCards.querySelectorAll("[data-test]").forEach(button => button.addEventListener("click", () => startTest(button.dataset.test)));
     els.continueButton.textContent = stats.answered ? `继续 ${chapters.find(c => c.id === state.lastChapter).chapter}` : "从第一章开始";
@@ -891,15 +926,21 @@ button:focus-visible { outline: 3px solid rgba(109, 93, 252, .28); outline-offse
       }
     }
     if (!state.tests[chapterId]) {
-      const pool = [...chapter.questions.map(q => q.id)];
-      for (let i = pool.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [pool[i], pool[j]] = [pool[j], pool[i]];
-      }
-      state.tests[chapterId] = { ids: pool.slice(0, TEST_SIZE), answers: {}, index: 0, submitted: false, score: null };
+      const draw = questions => {
+        const pool = questions.map(q => q.id);
+        for (let i = pool.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [pool[i], pool[j]] = [pool[j], pool[i]];
+        }
+        return pool;
+      };
+      const ids = chapterId === COMBO_ID
+        ? COMBO_SOURCES.flatMap(id => draw(chapters.find(c => c.id === id).questions).slice(0, 10))
+        : draw(chapter.questions).slice(0, TEST_SIZE);
+      state.tests[chapterId] = { ids, answers: {}, index: 0, submitted: false, score: null };
     }
     state.currentChapter = chapterId;
-    state.lastChapter = chapterId;
+    if (chapterId !== COMBO_ID) state.lastChapter = chapterId;
     state.view = "test";
     save();
     render();
@@ -920,14 +961,22 @@ button:focus-visible { outline: 3px solid rgba(109, 93, 252, .28); outline-offse
     if (!test) { state.view = "practice"; save(); render(); return; }
     els.testView.style.setProperty("--chapter-color", chapter.color);
     els.testView.style.setProperty("--chapter-soft", softColor(chapter.color));
-    els.testEyebrow.textContent = `${chapter.chapter.toUpperCase()} · ${chapter.englishTitle.toUpperCase()} · 测验模式`;
-    els.testTitle.textContent = `${chapter.title} · 30 题测验`;
+    $("testDescription").textContent = chapter.id === COMBO_ID
+      ? "从 Ch10、Ch14、Ch15 三章题库各随机抽取 10 题，共 30 题。交卷前可反复修改答案；交卷后显示成绩与逐题解析。"
+      : "从本章 90 题题库中随机抽取 30 题。交卷前可反复修改答案；交卷后显示成绩与逐题解析。";
+    $("quitTestButton").textContent = chapter.id === COMBO_ID ? "← 返回首页" : "← 返回练习";
+    els.testEyebrow.textContent = chapter.id === COMBO_ID
+      ? "CHAPTER 10 · 14 · 15 · 综合测验模式"
+      : `${chapter.chapter.toUpperCase()} · ${chapter.englishTitle.toUpperCase()} · 测验模式`;
+    els.testTitle.textContent = chapter.id === COMBO_ID ? "三章综合 · 30 题测验" : `${chapter.title} · 30 题测验`;
 
     const stats = testStats(test);
     els.testBanner.className = `test-banner${test.submitted ? " submitted" : ""}`;
     els.testBanner.textContent = test.submitted
       ? `✓ 本套测验已交卷，得分 ${test.score} 分（答对 ${stats.correct} / ${stats.total}）。现在可以逐题查看解析。`
-      : `测验进行中：共 ${stats.total} 题，交卷前可随时修改答案；题目从本章 90 题题库随机抽取。`;
+      : chapter.id === COMBO_ID
+        ? `测验进行中：共 ${stats.total} 题，由 Ch10、Ch14、Ch15 各随机抽取 10 题组成；交卷前可随时修改答案。`
+        : `测验进行中：共 ${stats.total} 题，交卷前可随时修改答案；题目从本章 90 题题库随机抽取。`;
     els.testProgressStats.innerHTML = `<div><strong>${stats.answered}</strong><span>/ ${stats.total} 已答</span></div>${test.submitted ? `<div><strong>${stats.correct}</strong><span>答对</span></div><div><strong>${stats.wrong}</strong><span>答错</span></div><div class="accuracy"><strong>${test.score}</strong><span>得分</span></div>` : `<div class="accuracy"><strong>${stats.total - stats.answered}</strong><span>待作答</span></div>`}`;
     els.testProgressFill.style.width = `${stats.answered / stats.total * 100}%`;
 
@@ -938,7 +987,7 @@ button:focus-visible { outline: 3px solid rgba(109, 93, 252, .28); outline-offse
 
     els.testPosition.textContent = `第 ${test.index + 1} / ${stats.total} 题`;
     els.testAnsweredCount.textContent = `已答 ${stats.answered} 题`;
-    els.testMeta.innerHTML = `<span class="meta-badge type">${q.type}</span><span class="meta-badge topic">${escapeHTML(q.topic)}</span><span class="meta-badge number">QUESTION ${test.index + 1} / ${stats.total}</span>`;
+    els.testMeta.innerHTML = `${chapter.id === COMBO_ID ? `<span class="meta-badge number">${q.chapterTag}</span>` : ""}<span class="meta-badge type">${q.type}</span><span class="meta-badge topic">${escapeHTML(q.topic)}</span><span class="meta-badge number">QUESTION ${test.index + 1} / ${stats.total}</span>`;
     els.testText.textContent = q.q;
     els.testOptions.innerHTML = q.options.map((option, optionIndex) => {
       let className = "option-button";
@@ -1148,7 +1197,10 @@ button:focus-visible { outline: 3px solid rgba(109, 93, 252, .28); outline-offse
     save();
     startTest(chapter.id);
   });
-  $("quitTestButton").addEventListener("click", () => { state.view = "practice"; save(); render(); });
+  $("quitTestButton").addEventListener("click", () => {
+    if (state.currentChapter === COMBO_ID) { state.view = "home"; } else { state.view = "practice"; }
+    save(); render();
+  });
   $("scoreButton").addEventListener("click", showScore);
   $("resetChapterButton").addEventListener("click", resetChapter);
   $("resetAllButton").addEventListener("click", resetAll);
